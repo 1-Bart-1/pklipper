@@ -206,6 +206,26 @@ def day_directory(filtered_root, day):
     return existing[0] if existing else filtered_root / day
 
 
+def flatten_day_folders(filtered_root):
+    """Move keepers up out of the `clips/`, `photos/` and `frames/` older versions made."""
+    for folder in sorted(filtered_root.glob("*/*")):
+        if folder.name not in ("clips", "photos", "frames") or not folder.is_dir():
+            continue
+        for path in sorted(folder.iterdir()):
+            target = folder.parent / path.name
+            if target.exists():
+                print(f"{path} left where it is: {target} already exists")
+            else:
+                path.rename(target)
+        if not any(folder.iterdir()):
+            folder.rmdir()
+
+
+def day_name(filtered_root, day):
+    """The name given to `day`: whatever follows the day in its filtered folder."""
+    return day_directory(filtered_root, day).name[len(day):].strip()
+
+
 def cut_video(source, start, end, target):
     """Stream-copy `start`-`end` out of `source`, leaving the original alone."""
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -218,3 +238,10 @@ def copy_photo(source, target):
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
     return target.is_file()
+
+
+def grab_frame(source, at, target):
+    """Write the frame of `source` at `at` seconds as a full-size JPEG."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return run([*FFMPEG_QUIET, "-ss", f"{at:.3f}", "-i", str(source), "-frames:v", "1",
+                "-q:v", "2", str(target)])

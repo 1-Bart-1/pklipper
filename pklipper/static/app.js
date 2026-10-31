@@ -9,6 +9,7 @@ const MAX_ZOOM = 200;
 const state = {
   items: [],
   days: [],
+  dayNames: {},
   day: null,
   visible: [],
   current: -1,
@@ -26,6 +27,10 @@ const state = {
 };
 
 const MAX_MEDIA_ZOOM = 20;
+const PAN_STEP = 80;
+const PAN_DIRECTIONS = {
+  ArrowLeft: [1, 0], ArrowRight: [-1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1],
+};
 
 function shownMedia() {
   const item = currentItem();
@@ -93,7 +98,7 @@ function undo() {
   state.marker = null;
   nameBox.value = activeClip()?.name ?? "";
   drawTimeline();
-  updateSaveButton();
+  updateSaveBar();
   playActiveClip();
 }
 
@@ -176,6 +181,18 @@ async function getJSON(url, options) {
   return { ok: answer.ok, body: await answer.json() };
 }
 
+/** POST `payload` to `url`, toasting the refusal; resolves to the body or null. */
+async function postJSON(url, payload) {
+  const { ok, body } = await getJSON(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (ok) return body;
+  toast(body.error || "the server refused", true);
+  return null;
+}
+
 function toast(message, bad) {
   const box = element("toast");
   box.textContent = message;
@@ -194,6 +211,7 @@ async function load() {
   const { body } = await getJSON("/api/library");
   state.items = body.items;
   state.days = body.days;
+  state.dayNames = body.dayNames;
   state.day = state.days[0] || null;
   applyFilter(0);
 }
@@ -203,11 +221,23 @@ function renderDays() {
   nav.replaceChildren();
   for (const day of state.days) {
     const button = document.createElement("button");
-    button.textContent = day;
+    button.textContent = state.dayNames[day] ? `${day} · ${state.dayNames[day]}` : day;
+    button.title = "double-click to name this day";
     button.setAttribute("aria-current", String(day === state.day));
     button.onclick = () => { state.day = day; applyFilter(0); };
+    button.ondblclick = () => nameDay(day);
     nav.append(button);
   }
+}
+
+async function nameDay(day) {
+  const name = prompt(`Name for ${day} (empty to clear)`, state.dayNames[day] || "");
+  if (name === null) return;
+  const body = await postJSON("/api/day", { day, name });
+  if (!body) return;
+  state.dayNames[day] = name.trim();
+  renderDays();
+  toast(`${day} saves into ${body.saved}`);
 }
 
 function applyFilter(startAt) {
@@ -278,12 +308,13 @@ function select(index) {
   state.offset = 0;
   state.history = [];
   resetMediaZoom();
-  state.clips = item.saves.map((save) => ({
+  state.clips = item.saves.map((save, saveIndex) => ({
     start: save.start ?? null, end: save.end ?? null, name: save.name, saved: true,
+    saveIndex,
   }));
   state.active = -1;
   state.marker = null;
-  nameBox.value = "";
+  nameBox.value = item.kind === "photo" ? item.saves[0]?.name ?? "" : "";
   element("title").textContent = `${item.label} · ${item.day}`;
   highlightTile();
   if (item.kind === "video") {
@@ -292,7 +323,7 @@ function select(index) {
   } else {
     showPhoto(item);
   }
-  updateSaveButton();
+  updateSaveBar();
 }
 
 function showPhoto(item) {
@@ -351,7 +382,8 @@ function wholeVideo() {
   return { start: 0, end: span || null, name: "", saved: false, untouched: true };
 }
 
-function addClip() {
+/** Start another clip; `complain` says so when there is no room left for one. */
+function addClip(complain = true) {
   remember();
   const span = mediaSpan();
   const ends = state.clips.map((clip) => clip.end ?? clip.start ?? 0);
@@ -363,12 +395,14 @@ function addClip() {
     state.clips.push({ start: lastEnd, end: span, name: "", saved: false });
     state.active = state.clips.length - 1;
   } else if (!splitLastClip()) {
+    state.history.pop();
+    if (complain) toast("no room for another clip — drag a handle in first", true);
     return;
   }
   state.marker = null;
   nameBox.value = activeClip().name;
   drawTimeline();
-  updateSaveButton();
+  updateSaveBar();
   playActiveClip();
 }
 
@@ -389,7 +423,7 @@ function deleteClip() {
   state.marker = null;
   nameBox.value = activeClip().name;
   drawTimeline();
-  updateSaveButton();
+  updateSaveBar();
   playActiveClip();
 }
 
@@ -403,10 +437,7 @@ function playActiveClip() {
 function splitLastClip() {
   const index = state.clips.reduce((found, clip, at) =>
     !clip.saved && (clip.end ?? 0) - (clip.start ?? 0) >= MIN_CLIP * 2 ? at : found, -1);
-  if (index < 0) {
-    toast("no room for another clip — drag a handle in first", true);
-    return false;
-  }
+  if (index < 0) return false;
   const clip = state.clips[index];
   const middle = (clip.start + clip.end) / 2;
   state.clips.splice(index + 1, 0,
@@ -422,7 +453,7 @@ function selectClip(index) {
   state.marker = null;
   nameBox.value = state.clips[index].name;
   drawTimeline();
-  updateSaveButton();
+  updateSaveBar();
   playActiveClip();
 }
 
@@ -457,7 +488,7 @@ function drawTimeline() {
     bands.append(band);
   });
   const clip = activeClip();
-  if (clip && !clip.saved && span) {
+  if (clip && span) {
     for (const edge of ["start", "end"]) {
       if (clip[edge] === null) continue;
       const handle = document.createElement("div");
@@ -480,7 +511,7 @@ function drawTimeline() {
   element("selected").textContent =
     summary + (state.marker ? `  ·  ${state.marker === "start" ? "IN" : "OUT"} selected` : "");
   const zoomed = state.zoom > 1 ? `  ·  zoom ${state.zoom.toFixed(1)}×` : "";
-  element("hint").textContent = (clip && !clip.saved
+  element("hint").textContent = (clip
     ? (clip.untouched ? "drag the IN and OUT handles, or press i / o at the playhead"
                       : (state.marker ? "arrows move it 1 s · shift+arrows one frame"
                                       : "click a handle to nudge it with the arrows"))
@@ -499,7 +530,13 @@ function renderChips() {
     const range = clip.start === null ? "new clip"
       : `${short(clip.start)}–${clip.end === null ? "?" : short(clip.end)}`;
     chip.textContent = `${index + 1}. ${clip.name || range}${clip.saved ? " ✓" : ""}`;
+    if (clip.saved && currentItem().saves[clip.saveIndex].starred) {
+      const mark = document.createElement("span");
+      mark.className = "pk";
+      chip.append(mark);
+    }
     chip.onclick = () => { chip.blur(); selectClip(index); };
+    if (clip.saved) chip.ondblclick = () => nameBox.select();
     row.append(chip);
   });
   const add = document.createElement("button");
@@ -510,31 +547,21 @@ function renderChips() {
   row.append(add);
 }
 
-function editable() {
-  const clip = activeClip();
-  if (!clip) return null;
-  if (clip.saved) {
-    toast("that clip is already saved — press a for a new one", true);
-    return null;
-  }
-  return clip;
-}
-
 function markIn() {
   remember();
-  const clip = editable();
+  const clip = activeClip();
   if (!clip || !player.duration) return;
   clip.start = player.currentTime;
   clip.untouched = false;
   if (clip.end !== null && clip.end <= clip.start) clip.end = null;
   state.marker = "start";
   drawTimeline();
-  updateSaveButton();
+  updateSaveBar();
 }
 
 function markOut() {
   remember();
-  const clip = editable();
+  const clip = activeClip();
   if (!clip || !player.duration) return;
   if (clip.start === null) { toast("mark the in point first (i)", true); return; }
   if (player.currentTime <= clip.start) {
@@ -545,24 +572,24 @@ function markOut() {
   clip.untouched = false;
   state.marker = "end";
   drawTimeline();
-  updateSaveButton();
+  updateSaveBar();
 }
 
 function clearMarks() {
   remember();
-  const clip = editable();
+  const clip = activeClip();
   if (!clip) return;
   Object.assign(clip, wholeVideo(), { name: clip.name });
   state.marker = null;
   state.looping = false;
   element("loop-button").setAttribute("aria-pressed", "false");
   drawTimeline();
-  updateSaveButton();
+  updateSaveBar();
 }
 
 function moveMarker(delta) {
   remember();
-  const clip = editable();
+  const clip = activeClip();
   if (!clip || !state.marker || clip[state.marker] === null) return;
   const span = player.duration || 0;
   const other = state.marker === "start" ? clip.end : clip.start;
@@ -582,7 +609,7 @@ function moveMarker(delta) {
 function startDrag(event, edge) {
   event.preventDefault();
   event.stopPropagation();
-  const clip = editable();
+  const clip = activeClip();
   if (!clip) return;
   remember();
   state.marker = edge;
@@ -603,7 +630,7 @@ function startDrag(event, edge) {
     window.removeEventListener("pointermove", move);
     window.removeEventListener("pointerup", release);
     state.dragging = false;
-    updateSaveButton();
+    updateSaveBar();
     playActiveClip();
   };
   window.addEventListener("pointermove", move);
@@ -619,14 +646,93 @@ function saveable() {
   return Boolean(clip && !clip.saved && clip.start !== null && clip.end !== null);
 }
 
-function updateSaveButton() {
-  element("save-button").disabled = !saveable();
+/** What re-saving the selected keeper would change, or null when it is as saved. */
+function keeperChanges() {
+  const keeper = currentKeeper();
+  const to = nameBox.value.trim();
+  if (!keeper || !to) return null;
+  const clip = activeClip();
+  const moved = Boolean(clip?.saved)
+    && (clip.start !== keeper.start || clip.end !== keeper.end);
+  if (moved && (clip.start === null || clip.end === null)) return null;
+  if (moved) return { to, start: clip.start, end: clip.end };
+  return to !== keeper.name ? { to } : null;
+}
+
+function updateSaveBar() {
+  const keeper = currentKeeper();
+  element("save-button").disabled = !saveable() && !keeperChanges();
+  element("save-button").textContent =
+    keeper ? (currentItem().kind === "video" ? "Re-save" : "Rename") : "Save";
   const clip = activeClip();
   if (clip && !clip.saved) clip.name = nameBox.value.trim();
+  element("star-button").toggleAttribute("data-unsaved", !keeper);
+  element("star-button").setAttribute("aria-pressed", String(Boolean(keeper?.starred)));
+}
+
+/** The saved keeper rename and star act on: the active clip, or this photo's copy. */
+function currentKeeper() {
+  const item = currentItem();
+  if (!item) return null;
+  if (item.kind === "photo") return item.saves[0] || null;
+  const clip = activeClip();
+  return clip?.saved ? item.saves[clip.saveIndex] : null;
+}
+
+/** Apply `changes` to the selected keeper: a new name, new marks, or both. */
+async function resave(changes) {
+  const keeper = currentKeeper();
+  element("save-button").disabled = true;
+  const body = await postJSON("/api/update",
+                              { relpath: currentItem().relpath, name: keeper.name, ...changes });
+  if (!body) {
+    updateSaveBar();
+    return;
+  }
+  keeper.name = body.name;
+  if ("start" in changes) {
+    keeper.start = changes.start;
+    keeper.end = changes.end;
+  }
+  if (activeClip()?.saved) activeClip().name = body.name;
+  nameBox.value = body.name;
+  toast(`re-saved ${body.saved}`);
+  renderStrip();
+  drawTimeline();
+  updateSaveBar();
+}
+
+async function toggleStar() {
+  const keeper = currentKeeper();
+  if (!keeper) {
+    toast("save it first, then star it", true);
+    return;
+  }
+  const body = await postJSON("/api/star",
+                              { relpath: currentItem().relpath, name: keeper.name });
+  if (!body) return;
+  keeper.starred = body.starred;
+  toast(body.starred ? `starred: ${body.saved}` : `unstarred: ${body.saved}`);
+  drawTimeline();
+  updateSaveBar();
+}
+
+async function exportFrame() {
+  const item = currentItem();
+  if (!item || item.kind !== "video") return;
+  player.pause();
+  const body = await postJSON("/api/frame",
+                              { relpath: item.relpath, at: player.currentTime });
+  if (body) toast(`frame saved to ${body.saved}`);
 }
 
 async function save(event) {
   event.preventDefault();
+  const changes = keeperChanges();
+  if (changes) {
+    resave(changes);
+    return;
+  }
   if (!saveable()) return;
   const item = currentItem();
   const clip = activeClip();
@@ -636,17 +742,13 @@ async function save(event) {
     payload.end = clip.end;
   }
   element("save-button").disabled = true;
-  const { ok, body } = await getJSON("/api/save", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!ok) {
-    toast(body.error || "save failed", true);
-    updateSaveButton();
+  const body = await postJSON("/api/save", payload);
+  if (!body) {
+    updateSaveBar();
     return;
   }
-  item.saves.push({ name: body.name, start: payload.start, end: payload.end });
+  item.saves.push({ name: body.name, start: payload.start, end: payload.end,
+                    starred: false });
   toast(`saved ${body.saved}`);
   renderStrip();
   if (item.kind === "photo") {
@@ -655,8 +757,11 @@ async function save(event) {
   }
   clip.saved = true;
   clip.name = body.name;
-  nameBox.value = "";
-  addClip();
+  clip.saveIndex = item.saves.length - 1;
+  addClip(false);
+  nameBox.value = activeClip().name;
+  drawTimeline();
+  updateSaveBar();
 }
 
 function step(delta) {
@@ -698,6 +803,12 @@ function onKey(event) {
     return;
   }
   if (event.ctrlKey || event.altKey || event.metaKey) return;
+  const pan = PAN_DIRECTIONS[event.key];
+  if (pan && state.media.scale > 1 && !state.marker && !event.shiftKey) {
+    event.preventDefault();
+    panMedia(pan[0] * PAN_STEP, pan[1] * PAN_STEP);
+    return;
+  }
   const item = currentItem();
   const video = item && item.kind === "video";
   // Shift always means one frame: of the selected marker, or of the playhead.
@@ -733,6 +844,9 @@ function onKey(event) {
     l: toggleLoop,
     f: toggleFullscreen,
     n: () => nameBox.focus(),
+    r: () => nameBox.select(),
+    s: toggleStar,
+    e: () => { if (video) exportFrame(); },
     Escape: () => { state.marker = null; drawTimeline(); },
     0: resetMediaZoom,
     1: () => setRate(RATES[0]),
@@ -821,12 +935,14 @@ function press(id, action) {
 
 function wire() {
   element("save-bar").onsubmit = save;
-  nameBox.oninput = updateSaveButton;
+  nameBox.oninput = updateSaveBar;
   element("hide-saved").onchange = () => applyFilter(state.current);
   element("help-button").onclick = () => element("help").showModal();
   press("in-button", markIn);
   press("out-button", markOut);
   press("clear-button", clearMarks);
+  press("frame-button", exportFrame);
+  press("star-button", toggleStar);
   press("loop-button", toggleLoop);
   press("fullscreen-button", toggleFullscreen);
   element("screen").ondblclick = toggleFullscreen;

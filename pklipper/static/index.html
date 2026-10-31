@@ -38,6 +38,7 @@
         <span id="rates" class="rates"></span>
         <button id="in-button" class="ghost" title="mark in (i)">in</button>
         <button id="out-button" class="ghost" title="mark out (o)">out</button>
+        <button id="frame-button" class="ghost" title="export this frame (e)">frame</button>
         <button id="clear-button" class="ghost" title="clear this clip's marks (x)">clear</button>
         <button id="loop-button" class="ghost" title="looping this clip (l)">loop</button>
         <button id="fullscreen-button" class="ghost" title="fullscreen (f)">⛶</button>
@@ -47,6 +48,8 @@
 
     <form id="save-bar" autocomplete="off">
       <span id="title" class="title"></span>
+      <button id="star-button" type="button" class="star"
+              title="star: move this keeper into starred/ (s)"></button>
       <input id="name" placeholder="name this keeper to save it…" spellcheck="false">
       <button id="save-button" type="submit" disabled>Save</button>
     </form>
@@ -72,11 +75,16 @@
     <dt>l</dt><dd>stop looping the active clip (it loops by default)</dd>
     <dt>f</dt><dd>fullscreen</dd>
     <dt>n / enter</dt><dd>name box / save</dd>
+    <dt>r</dt><dd>name box, to rename the selected saved clip or photo</dd>
+    <dt>s</dt><dd>star it: move it into the day's starred/ folder, or back</dd>
+    <dt>e</dt><dd>export the frame under the playhead, full size, to the day's folder</dd>
     <dt>ctrl + z</dt><dd>undo a mark, a nudge or an added clip</dd>
+    <dt>arrows, zoomed in</dt><dd>pan the picture</dd>
     <dt>0</dt><dd>reset the picture zoom</dd>
   </dl>
   <p class="fineprint">Scroll on the picture to zoom it and drag to pan; scroll on the
-  bar to zoom the timeline instead. Click a marker to
+  bar to zoom the timeline instead. Double-click a day to
+  name it, a saved clip's chip to rename it. Move a saved clip's marks and Re-save to cut it again. Click a marker to
   select it, then nudge it with the arrows. Cuts are
   stream-copied, so a clip can start up to one keyframe (~2 s) before the in point.
   Originals are never touched.</p>

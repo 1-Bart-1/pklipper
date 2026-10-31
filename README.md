@@ -7,7 +7,7 @@ A browser-based viewer for going through a day of camera footage fast, marking t
 ```
 <library>/
 ├── unfiltered/      every original, in any arrangement you like — days come from the metadata
-├── filtered/        what you keep: <day>/clips/<name>.mov and <day>/photos/<name>.JPG
+├── filtered/        what you keep: <day> <name>/ holds clips, photos and frames, starred/ the favourites
 ├── cuts.csv         every clip you saved: source,start,end,name
 ├── picks.csv        every photo you saved: source,name
 └── .pklipper/        thumbnails, playback proxies and the capture-time index (disposable)
@@ -34,7 +34,9 @@ The folder you pass is remembered, so the launcher entry and a bare `pklipper` r
 
 One video can hold as many clips as you like: mark `i` and `o`, name it, **Save**, and a fresh clip is waiting — `a` adds one by hand, and the chips under the bar switch between them. A name is required before **Save** does anything.
 
-Marks are draggable on the play bar. Click a marker to select it, then `←`/`→` move it a second and `shift`+`←`/`→` move it a single frame. With no marker selected the arrows seek the video instead. `1`–`4` set playback speed down to 0.25× for checking a turn frame by frame, `l` loops the clip you are working on, `f` is fullscreen, `?` lists every key.
+A saved clip stays editable: select it, drag its handles or change its name, and **Re-save** cuts it again from the original and updates its row in `cuts.csv`; for a saved photo the button renames it. Click the PK logo next to the title, or press `s`, to star a keeper: it moves into `filtered/<day>/starred/`, and clicking again moves it back. `e` exports the frame under the playhead, full size from the original, to `filtered/<day>/`. Double-click a day to name it; the name becomes its folder, `filtered/<day> <name>/`.
+
+Marks are draggable on the play bar. Click a marker to select it, then `←`/`→` move it a second and `shift`+`←`/`→` move it a single frame. With no marker selected the arrows seek the video instead. Zoomed into the picture, they pan it. `1`–`4` set playback speed down to 0.25× for checking a turn frame by frame, `l` loops the clip you are working on, `f` is fullscreen, `?` lists every key.
 
 Playback runs off 720p proxies built on demand into `.pklipper/proxies/`, because browsers cannot play the camera's H.264-plus-PCM MOV files. Proxies keep the original timeline, so marks made against a proxy cut correctly from the original.
 

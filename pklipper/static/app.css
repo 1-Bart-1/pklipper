@@ -104,6 +104,17 @@ main { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; 
 .chip[aria-current="true"] { border-color: var(--accent); color: var(--text); }
 .chip[data-saved] { border-color: #46d17f55; color: var(--keep); }
 .chip.add { border-style: dashed; }
+.pk {
+  display: inline-block; width: 2.1em; height: 1em; background: currentColor;
+  mask: url(/static/pk.svg) center / contain no-repeat;
+}
+.star {
+  width: 44px; height: 22px; padding: 0; border: 0; cursor: pointer;
+  background: var(--dim); mask: url(/static/pk.svg) center / contain no-repeat;
+}
+.star:hover { background: var(--text); }
+.star[aria-pressed="true"] { background: var(--accent); }
+.star[data-unsaved] { opacity: .35; }
 .rates { display: flex; gap: 4px; }
 .rates button {
   background: transparent; border: 1px solid var(--line); color: var(--dim);

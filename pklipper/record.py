@@ -5,7 +5,6 @@ whole day can be re-cut from the originals at any time. `picks.csv` holds photos
 which are copied rather than cut and therefore need no timestamps.
 """
 import csv
-from pathlib import Path
 
 from .slice import read_cuts, seconds
 
@@ -33,11 +32,7 @@ def read_picks(sheet):
 
 
 def saves_by_source(root):
-    """Map each source file's base name to the saves made from it.
-
-    Keyed by base name rather than relative path so rows written before the
-    library was sorted into day folders still light up in the viewer.
-    """
+    """Map each source, spelled as the sheet records it, to the saves made from it."""
     saves = {}
     cuts_sheet = root / CUTS_SHEET
     if cuts_sheet.is_file():
@@ -47,10 +42,10 @@ def saves_by_source(root):
             print(f"{CUTS_SHEET}: {complaint} — saved clips will not be marked")
             rows = []
         for source, start, end, name in rows:
-            saves.setdefault(Path(source).name, []).append(
+            saves.setdefault(source, []).append(
                 {"name": name, "start": seconds(start), "end": seconds(end)})
     for source, name in read_picks(root / PICKS_SHEET):
-        saves.setdefault(Path(source).name, []).append({"name": name})
+        saves.setdefault(source, []).append({"name": name})
     return saves
 
 
@@ -78,3 +73,21 @@ def append_cut(root, source, start, end, name):
 def append_pick(root, source, name):
     """Record a kept photo in `picks.csv`."""
     append(root / PICKS_SHEET, ["source", "name"], [source, name])
+
+
+def update(root, name, to, start=None, end=None):
+    """Rename the save called `name` to `to`, and give a cut new marks when passed."""
+    for sheet, column in ((root / CUTS_SHEET, 3), (root / PICKS_SHEET, 1)):
+        if not sheet.is_file():
+            continue
+        with sheet.open(newline="", encoding="utf-8-sig") as handle:
+            rows = list(csv.reader(handle))
+        matches = [row for row in rows if len(row) > column and row[column].strip() == name]
+        if not matches:
+            continue
+        for row in matches:
+            row[column] = to
+            if start is not None and sheet.name == CUTS_SHEET:
+                row[1], row[2] = stamp(start), stamp(end)
+        with sheet.open("w", newline="", encoding="utf-8") as handle:
+            csv.writer(handle).writerows(rows)

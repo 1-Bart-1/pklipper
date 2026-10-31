@@ -2,6 +2,7 @@
 import json
 import mimetypes
 import re
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -11,6 +12,7 @@ from . import library, media, record
 STATIC_DIR = Path(__file__).parent / "static"
 UNFILTERED = "unfiltered"
 FILTERED = "filtered"
+STARRED = "starred"
 
 
 class Library:
@@ -22,6 +24,7 @@ class Library:
         self.filtered = root / FILTERED
         self.cache = root / media.CACHE_DIR
         self.proxies = media.ProxyPool(self.unfiltered, self.cache)
+        media.flatten_day_folders(self.filtered)
         self.items = []
         self.refresh()
 
@@ -31,21 +34,45 @@ class Library:
         return self.items
 
     def catalogue(self):
-        """The whole library as the page needs it, including what is saved."""
+        """The whole library as the page needs it, including what is saved.
+
+        A save recorded by bare file name, as `pklipper.slice` accepts, lights up
+        only the one file of that name; a camera restarting its numbering makes
+        such a name ambiguous.
+        """
         saves = record.saves_by_source(self.root)
+        name_counts = Counter(item.label for item in self.items)
         entries = []
         for item in self.items:
+            item_saves = saves.get(item.relpath, [])
+            if item.relpath != item.label and name_counts[item.label] == 1:
+                item_saves = item_saves + saves.get(item.label, [])
+            for save in item_saves:
+                save["starred"] = self.keeper(item, save["name"]).parent.name == STARRED
             entry = {"relpath": item.relpath, "label": item.label, "kind": item.kind,
                      "day": item.day, "captured": item.captured,
                      "duration": item.duration, "size": item.size, "fps": item.fps,
-                     "saves": saves.get(item.label, [])}
+                     "saves": item_saves}
             entries.append(entry)
-        return {"root": str(self.root), "days": library.days(self.items),
+        days = library.days(self.items)
+        return {"root": str(self.root), "days": days,
+                "dayNames": {day: media.day_name(self.filtered, day) for day in days},
                 "items": entries}
 
     def find(self, relpath):
-        """The item at `relpath`, or None when it is not in the library."""
-        return next((item for item in self.items if item.relpath == relpath), None)
+        """The item at `relpath`, raising ValueError when it is not in the library."""
+        item = next((item for item in self.items if item.relpath == relpath), None)
+        if item is None:
+            raise ValueError(f"{relpath} is not in the library")
+        return item
+
+    def keeper(self, item, name):
+        """The filtered file saved from `item` as `name`, in `starred/` when starred."""
+        suffix = Path(item.relpath).suffix
+        filename = name + (suffix if item.kind == "photo" else suffix.lower())
+        day_dir = media.day_directory(self.filtered, item.day)
+        starred = day_dir / STARRED / filename
+        return starred if starred.is_file() else day_dir / filename
 
     def save(self, relpath, name, start=None, end=None):
         """Cut or copy `relpath` into the filtered tree as `name`.
@@ -54,34 +81,112 @@ class Library:
         viewer when the request cannot be honoured.
         """
         item = self.find(relpath)
-        if item is None:
-            raise ValueError(f"{relpath} is not in the library")
-        name = name.strip()
-        if not name:
-            raise ValueError("a name is needed before this can be saved")
-        if "/" in name or name.startswith("."):
-            raise ValueError(f"name {name!r} may not contain '/' or start with '.'")
-        if name in record.names_in_use(self.root):
-            raise ValueError(f"name {name!r} is already used")
+        name = unused_name(self.root, name)
         source = self.unfiltered / relpath
-        day_dir = media.day_directory(self.filtered, item.day)
+        target = self.keeper(item, name)
+        if target.exists():
+            raise ValueError(f"{target.name} already exists")
         if item.kind == "photo":
-            target = day_dir / "photos" / (name + source.suffix)
-            if target.exists():
-                raise ValueError(f"{target.name} already exists")
             if not media.copy_photo(source, target):
                 raise ValueError(f"copying {source.name} failed")
             record.append_pick(self.root, relpath, name)
             return target
         if start is None or end is None or end <= start:
             raise ValueError("mark an in point and a later out point first")
-        target = day_dir / "clips" / (name + source.suffix.lower())
-        if target.exists():
-            raise ValueError(f"{target.name} already exists")
         if not media.cut_video(source, start, end, target):
             raise ValueError(f"ffmpeg could not cut {source.name}")
         record.append_cut(self.root, relpath, start, end, name)
         return target
+
+    def saved(self, relpath, name):
+        """The filtered file saved from `relpath` as `name`, which must exist."""
+        target = self.keeper(self.find(relpath), name)
+        if not target.is_file():
+            raise ValueError(f"{target.relative_to(self.root)} is missing")
+        return target
+
+    def update(self, relpath, name, to, start=None, end=None):
+        """Rename the keeper saved as `name` to `to`, re-cutting it when given new marks.
+
+        Returns the path it now lives at, starred or not as before.
+        """
+        current = self.saved(relpath, name)
+        to = checked_name(to) if to.strip() == name else unused_name(self.root, to)
+        target = current.with_name(to + current.suffix)
+        if target != current and target.exists():
+            raise ValueError(f"{target.name} already exists")
+        if start is None:
+            current.rename(target)
+        else:
+            if self.find(relpath).kind != "video" or end is None or end <= start:
+                raise ValueError("mark an in point and a later out point first")
+            partial = target.with_name(f".recut {target.name}")
+            if not media.cut_video(self.unfiltered / relpath, start, end, partial):
+                partial.unlink(missing_ok=True)
+                raise ValueError(f"ffmpeg could not cut {Path(relpath).name}")
+            partial.replace(target)
+            if target != current:
+                current.unlink()
+        record.update(self.root, name, to, start, end)
+        return target
+
+    def toggle_star(self, relpath, name):
+        """Move a saved keeper into `starred/` or back out; returns the new path."""
+        current = self.saved(relpath, name)
+        day_dir = media.day_directory(self.filtered, self.find(relpath).day)
+        target = day_dir / current.name if current.parent.name == STARRED \
+            else day_dir / STARRED / current.name
+        if target.exists():
+            raise ValueError(f"{target.relative_to(self.root)} already exists")
+        target.parent.mkdir(exist_ok=True)
+        current.rename(target)
+        return target
+
+    def name_day(self, day, name):
+        """Name `day` by renaming its filtered folder to `<day> <name>`."""
+        if day not in library.days(self.items):
+            raise ValueError(f"{day} is not a day in the library")
+        name = name.strip()
+        target = self.filtered / (f"{day} {checked_name(name)}" if name else day)
+        current = media.day_directory(self.filtered, day)
+        if current == target:
+            return target
+        if target.exists():
+            raise ValueError(f"{target.name} already exists")
+        if current.is_dir():
+            current.rename(target)
+        else:
+            target.mkdir(parents=True)
+        return target
+
+    def export_frame(self, relpath, at):
+        """Write the original's frame at `at` seconds into the day's folder."""
+        item = self.find(relpath)
+        if item.kind != "video" or at is None:
+            raise ValueError("only a video has frames to export")
+        target = (media.day_directory(self.filtered, item.day)
+                  / f"{Path(relpath).stem} {at:.2f}s.jpg")
+        if not media.grab_frame(self.unfiltered / relpath, at, target):
+            raise ValueError(f"ffmpeg could not grab a frame from {item.label}")
+        return target
+
+
+def checked_name(name):
+    """`name` stripped, raising ValueError when it cannot be a file name."""
+    name = name.strip()
+    if not name:
+        raise ValueError("a name is needed")
+    if "/" in name or name.startswith("."):
+        raise ValueError(f"name {name!r} may not contain '/' or start with '.'")
+    return name
+
+
+def unused_name(root, name):
+    """`name` checked, raising ValueError when a keeper already has it."""
+    name = checked_name(name)
+    if name in record.names_in_use(root):
+        raise ValueError(f"name {name!r} is already used")
+    return name
 
 
 def send_file(handler, path, content_type=None, cache=True):
@@ -178,11 +283,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def wanted_item(self, query):
         """The item named by `f=`, answering 404 itself when there is none."""
-        relpath = (query.get("f") or [""])[0]
-        item = self.library.find(relpath)
-        if item is None:
+        try:
+            return self.library.find((query.get("f") or [""])[0])
+        except ValueError:
             self.send_error(404, "not in the library")
-        return item
+            return None
 
     def do_GET(self):
         """Dispatch a GET to the page, an asset, or the API."""
@@ -234,7 +339,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(404)
 
     def do_POST(self):
-        """Handle a save request from the viewer."""
+        """Handle a change the viewer asks of the filtered tree."""
         url = urlparse(self.path)
         length = int(self.headers.get("Content-Length") or 0)
         try:
@@ -242,21 +347,33 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self.send_json({"error": "malformed request"}, status=400)
             return
-        if url.path == "/api/save":
-            try:
-                target = self.library.save(payload.get("relpath", ""),
-                                          payload.get("name", ""),
-                                          payload.get("start"), payload.get("end"))
-            except ValueError as refusal:
-                self.send_json({"error": str(refusal)}, status=400)
-                return
-            self.send_json({"saved": str(target.relative_to(self.library.root)),
-                            "name": payload.get("name", "").strip()})
-        elif url.path == "/api/refresh":
+        if url.path == "/api/refresh":
             self.library.refresh()
             self.send_json(self.library.catalogue())
-        else:
+            return
+        library = self.library
+        relpath = payload.get("relpath", "")
+        actions = {
+            "/api/save": lambda: library.save(relpath, payload.get("name", ""),
+                                              payload.get("start"), payload.get("end")),
+            "/api/update": lambda: library.update(relpath, payload.get("name", ""),
+                                                  payload.get("to", ""),
+                                                  payload.get("start"), payload.get("end")),
+            "/api/star": lambda: library.toggle_star(relpath, payload.get("name", "")),
+            "/api/frame": lambda: library.export_frame(relpath, payload.get("at")),
+            "/api/day": lambda: library.name_day(payload.get("day", ""),
+                                                 payload.get("name", "")),
+        }
+        if url.path not in actions:
             self.send_error(404)
+            return
+        try:
+            target = actions[url.path]()
+        except ValueError as refusal:
+            self.send_json({"error": str(refusal)}, status=400)
+            return
+        self.send_json({"saved": str(target.relative_to(library.root)),
+                        "name": target.stem, "starred": target.parent.name == STARRED})
 
 
 def serve(root, host, port):
