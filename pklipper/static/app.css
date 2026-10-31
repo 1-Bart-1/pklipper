@@ -23,12 +23,17 @@ header {
 .spacer { flex: 1; }
 .count { color: var(--dim); font-variant-numeric: tabular-nums; }
 .toggle { color: var(--dim); display: flex; align-items: center; gap: 6px; }
-nav { display: flex; gap: 6px; }
+nav { display: flex; gap: 6px; align-items: center; min-width: 0; overflow-x: auto; }
 nav button {
-  background: transparent; color: var(--dim); border: 1px solid var(--line);
-  border-radius: 999px; padding: 4px 12px; cursor: pointer; font: inherit;
+  flex: none; max-width: 9em; background: transparent; color: var(--dim);
+  border: 1px solid var(--line); border-radius: 12px; padding: 3px 12px; cursor: pointer;
+  font: inherit; line-height: 1.2; overflow: hidden;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
 }
-nav button[aria-current="true"] { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+nav button[aria-current="true"] {
+  max-width: none; display: block; white-space: nowrap;
+  color: var(--bg); background: var(--accent); border-color: var(--accent);
+}
 main { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
 #stage { display: flex; flex-direction: column; min-width: 0; background: #0c0d10; }
 #screen {
