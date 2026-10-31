@@ -13,7 +13,7 @@ A browser-based viewer for going through a day of camera footage fast, marking t
 └── .pklipper/        thumbnails, playback proxies and the capture-time index (disposable)
 ```
 
-Days are read from EXIF for photos and from the container's creation time for video, converted to `CAPTURE_TZ` in `pklipper/library.py`. Folder names inside `unfiltered/` are ignored, so a card that restarted its file numbering can be dropped in day-folders without the viewer caring.
+Days are read from EXIF for photos and from the container's creation time for video, converted to `CAPTURE_TZ` in `pklipper/library.py`. Folder names inside `unfiltered/` are ignored, so a card that restarted its file numbering can be dropped in day-folders without the viewer caring — except a top folder named `<dd-mm> <tag>`, whose files get days of their own, `<tag> <dd-mm>`, to keep say `29-09 lifestyle/` apart from the surf footage of `29-09`. `.mpg` counts as video.
 
 ## Download
 

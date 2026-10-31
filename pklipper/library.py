@@ -1,10 +1,14 @@
 """Scan a media library and group every file by the day it was captured.
 
+A top folder named `<dd-mm> <tag>` puts its files on days of their own,
+labelled `<tag> <dd-mm>`, so they stay apart from the plain `<dd-mm>` days.
+
 Photo timestamps come from EXIF and are already camera-local. Video timestamps
 come from the QuickTime/MP4 container in UTC and are converted to `CAPTURE_TZ`,
 so a clip shot late in the evening lands on the day it was filmed.
 """
 import json
+import re
 import struct
 import subprocess
 from dataclasses import asdict, dataclass
@@ -12,9 +16,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-CACHE_VERSION = 2
+from .slice import VIDEO_SUFFIXES
+
+CACHE_VERSION = 3
 PHOTO_SUFFIXES = {".jpg", ".jpeg", ".png", ".heic"}
-VIDEO_SUFFIXES = {".mov", ".mp4", ".m4v", ".avi", ".mkv", ".mts", ".m2ts"}
+TAGGED_FOLDER = re.compile(r"\d\d-\d\d (.+)")
 CAPTURE_TZ = ZoneInfo("Europe/Dublin")
 
 
@@ -101,6 +107,14 @@ def probe_video(path):
     return captured, duration, fps
 
 
+def day_label(relpath, captured):
+    """The capture date as `dd-mm`, behind the tag of a `<dd-mm> <tag>` top folder."""
+    date = captured.strftime("%d-%m")
+    parts = Path(relpath).parts
+    tagged = TAGGED_FOLDER.fullmatch(parts[0]) if len(parts) > 1 else None
+    return f"{tagged[1]} {date}" if tagged else date
+
+
 def describe(path, root):
     """Build the MediaItem for one file, falling back to its mtime when unknown."""
     kind = "video" if path.suffix.lower() in VIDEO_SUFFIXES else "photo"
@@ -110,8 +124,8 @@ def describe(path, root):
         captured, duration, fps = exif_datetime(path), 0.0, 25.0
     if captured is None:
         captured = datetime.fromtimestamp(path.stat().st_mtime)
-    return MediaItem(relpath=str(path.relative_to(root)), kind=kind,
-                     day=captured.strftime("%d-%m"),
+    relpath = str(path.relative_to(root))
+    return MediaItem(relpath=relpath, kind=kind, day=day_label(relpath, captured),
                      captured=captured.isoformat(timespec="seconds"),
                      duration=round(duration, 3), size=path.stat().st_size,
                      fps=round(fps, 3))

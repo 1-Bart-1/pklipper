@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-VIDEO_SUFFIXES = {".mov", ".mp4", ".m4v", ".avi", ".mkv", ".mts", ".m2ts"}
+VIDEO_SUFFIXES = {".mov", ".mp4", ".m4v", ".avi", ".mkv", ".mts", ".m2ts", ".mpg"}
 
 
 def parse_args():
